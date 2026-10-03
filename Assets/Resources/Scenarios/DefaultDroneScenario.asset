@@ -1,0 +1,30 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fcab6de2722a2164eb8959337deb2ed2, type: 3}
+  m_Name: DefaultDroneScenario
+  m_EditorClassIdentifier: DroneSimulator.Runtime::DroneSimulator.Configuration.ScenarioConfig
+  initialSimulationSpeed: 2
+  maximumFlightSpeed: 18
+  timeOfDay: 1
+  weather: 0
+  windStrength: 10
+  windDirectionDegrees: 0
+  turbulence: 0
+  visibility: 100
+  sensorDegradation: 0
+  swarmEnabled: 0
+  droneCount: 1
+  formation: 0
+  formationSpacing: 6
+  defaultThreatState: 0
+  terrain: 0
+  enemyDroneCount: 3

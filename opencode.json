@@ -1,0 +1,15 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "unity": {
+      "type": "local",
+      "command": [
+        "C:\\Users\\windows10 pro\\AppData\\Local\\Unity\\bin\\unity.exe",
+        "mcp",
+        "--project-path",
+        "E:\\Unity Projects\\Drone Simulator"
+      ],
+      "enabled": true
+    }
+  }
+}
