@@ -41,16 +41,28 @@ namespace DroneSimulator.Environment
                 return;
             }
 
-            if (keyboard.rKey.wasPressedThisFrame) AdjustWindStrength(windStrengthStep);
-            if (keyboard.fKey.wasPressedThisFrame) AdjustWindStrength(-windStrengthStep);
-            if (keyboard.tKey.wasPressedThisFrame) AdjustWindDirection(windDirectionStep);
-            if (keyboard.gKey.wasPressedThisFrame) AdjustWindDirection(-windDirectionStep);
-            if (keyboard.yKey.wasPressedThisFrame) AdjustTurbulence(turbulenceStep);
-            if (keyboard.hKey.wasPressedThisFrame) AdjustTurbulence(-turbulenceStep);
-            if (keyboard.uKey.wasPressedThisFrame) AdjustVisibility(visibilityStep);
-            if (keyboard.jKey.wasPressedThisFrame) AdjustVisibility(-visibilityStep);
-            if (keyboard.vKey.wasPressedThisFrame) CycleWeather();
-            if (keyboard.bKey.wasPressedThisFrame) CycleTimeOfDay();
+            if (Pressed(keyboard, "windUp")) AdjustWindStrength(windStrengthStep);
+            if (Pressed(keyboard, "windDown")) AdjustWindStrength(-windStrengthStep);
+            if (Pressed(keyboard, "windDirUp")) AdjustWindDirection(windDirectionStep);
+            if (Pressed(keyboard, "windDirDown")) AdjustWindDirection(-windDirectionStep);
+            if (Pressed(keyboard, "turbUp")) AdjustTurbulence(turbulenceStep);
+            if (Pressed(keyboard, "turbDown")) AdjustTurbulence(-turbulenceStep);
+            if (Pressed(keyboard, "visUp")) AdjustVisibility(visibilityStep);
+            if (Pressed(keyboard, "visDown")) AdjustVisibility(-visibilityStep);
+            if (Pressed(keyboard, "weather")) CycleWeather();
+            if (Pressed(keyboard, "time")) CycleTimeOfDay();
+        }
+
+        private static bool Pressed(Keyboard keyboard, string bindingId)
+        {
+            Key key = KeyBindings.Get(bindingId);
+            if (key == Key.None)
+            {
+                return false;
+            }
+
+            var control = keyboard[key];
+            return control != null && control.wasPressedThisFrame;
         }
 
         public void AdjustWindStrength(float delta)

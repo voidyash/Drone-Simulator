@@ -51,11 +51,20 @@ namespace DroneSimulator.Drones
         [Min(0f)] [SerializeField] private float angularStabilityDamping = 2.5f;
         [Tooltip("Hard cap on angular velocity (rad/s): prevents violent post-impact spin while preserving ordinary impact reactions.")]
         [Min(1f)] [SerializeField] private float maxAngularVelocity = 10f;
+        [Tooltip("Seconds after an impact during which the drone steers back toward its startup orientation.")]
+        [Min(0f)] [SerializeField] private float recoveryWindow = 2f;
+        [Tooltip("Impact closing speed (m/s) that opens a recovery window. Gentler touches recover on damping alone.")]
+        [Min(0f)] [SerializeField] private float recoveryImpactThreshold = 4f;
+        [Tooltip("Orientation recovery rate (1/s) toward the startup orientation. Fades out over the window.")]
+        [Min(0f)] [SerializeField] private float recoveryRate = 5f;
 
         private bool flipping;
         private Vector3 flipAxis = Vector3.right;
         private float flipRemaining;
         private float holdAltitudeY;
+        private Quaternion startupOrientation = Quaternion.identity;
+        private float lastImpactTime = float.NegativeInfinity;
+        private float lastContactTime = float.NegativeInfinity;
         private InputActionMap droneActionMap;
         private InputAction moveAction;
         private InputAction altitudeAction;
@@ -68,6 +77,7 @@ namespace DroneSimulator.Drones
         private void Awake()
         {
             body = GetComponent<Rigidbody>();
+            startupOrientation = transform.rotation;
             body.useGravity = false;
             body.interpolation = RigidbodyInterpolation.Interpolate;
             // Fast-moving racer vs thin geometry: continuous detection stops
@@ -186,7 +196,81 @@ namespace DroneSimulator.Drones
                 body.angularVelocity = Vector3.ClampMagnitude(body.angularVelocity, maxAngularVelocity);
             }
 
+            if (!flipping && localDirection.sqrMagnitude < 0.09f
+                && Time.time - lastContactTime < 0.3f
+                && Quaternion.Angle(body.rotation, startupOrientation) > 5f)
+            {
+                // Still touching geometry with hands off the sticks: keep the
+                // recovery window open until upright instead of expiring
+                // mid-contact. Freshness (not a counter) proves contact, so a
+                // missed exit, teleport, or destroyed obstacle can never wedge
+                // recovery on — and any pilot stick motion suspends it.
+                lastImpactTime = Time.time;
+            }
+
+            ApplyRecovery();
+
             ApplyEnvironmentDisturbance();
+        }
+
+        private void OnCollisionEnter(Collision collision)
+        {
+            if (!flightEnabled || collision == null)
+            {
+                return;
+            }
+
+            lastContactTime = Time.time;
+
+            // Open a recovery window on solid hits only; light brushes settle
+            // on angular damping alone.
+            if (collision.relativeVelocity.magnitude >= recoveryImpactThreshold)
+            {
+                lastImpactTime = Time.time;
+            }
+        }
+
+        private void OnCollisionStay(Collision collision)
+        {
+            if (collision == null)
+            {
+                return;
+            }
+
+            lastContactTime = Time.time;
+        }
+
+        /// <summary>
+        /// Post-collision orientation recovery: briefly steers the body back
+        /// toward the orientation captured at simulation startup — never
+        /// toward the collision surface. Fades out over the window, runs only
+        /// after impacts (never during normal flight or flip maneuvers), and
+        /// uses physics-space rotation so the solver adopts it.
+        /// </summary>
+        private void ApplyRecovery()
+        {
+            if (flipping || body == null)
+            {
+                return;
+            }
+
+            float elapsed = Time.time - lastImpactTime;
+            if (elapsed < 0f || elapsed > recoveryWindow || recoveryWindow <= 0f)
+            {
+                return;
+            }
+
+            float fade = 1f - elapsed / recoveryWindow;
+            float step = Mathf.Clamp01(recoveryRate * Time.fixedDeltaTime) * fade;
+            if (step <= 0f)
+            {
+                return;
+            }
+
+            // Ensure the solver processes the correction even if the body
+            // dozed off while pinned against geometry.
+            body.WakeUp();
+            body.MoveRotation(Quaternion.Slerp(body.rotation, startupOrientation, step));
         }
 
         public void SetWindSystem(WindSystem system)
@@ -238,14 +322,26 @@ namespace DroneSimulator.Drones
                 return;
             }
 
-            if (keyboard.xKey.wasPressedThisFrame)
+            if (Pressed(keyboard, "flipFwd"))
             {
                 TriggerFlip(true);
             }
-            else if (keyboard.nKey.wasPressedThisFrame)
+            else if (Pressed(keyboard, "flipRoll"))
             {
                 TriggerFlip(false);
             }
+        }
+
+        private static bool Pressed(Keyboard keyboard, string bindingId)
+        {
+            Key key = Configuration.KeyBindings.Get(bindingId);
+            if (key == Key.None)
+            {
+                return false;
+            }
+
+            var control = keyboard[key];
+            return control != null && control.wasPressedThisFrame;
         }
 
         private void ProgressFlip()
@@ -429,6 +525,7 @@ namespace DroneSimulator.Drones
                 return;
             }
 
+            Configuration.InputRebindStore.Apply(actions);
             droneActionMap = actions.FindActionMap("Drone", false);
             if (droneActionMap == null)
             {

@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
+using DroneSimulator.Configuration;
 
 namespace DroneSimulator.Sensors
 {
@@ -25,9 +26,21 @@ namespace DroneSimulator.Sensors
             ResolveManager();
             if (sensorManager == null) return;
 
-            if (keyboard.iKey.wasPressedThisFrame) AdjustOverall(degradationStep);
-            if (keyboard.kKey.wasPressedThisFrame) AdjustOverall(-degradationStep);
-            if (keyboard.oKey.wasPressedThisFrame) sensorManager.SetOverallDegradation(0f);
+            if (Pressed(keyboard, "sensUp")) AdjustOverall(degradationStep);
+            if (Pressed(keyboard, "sensDown")) AdjustOverall(-degradationStep);
+            if (Pressed(keyboard, "sensReset")) sensorManager.SetOverallDegradation(0f);
+        }
+
+        private static bool Pressed(Keyboard keyboard, string bindingId)
+        {
+            Key key = KeyBindings.Get(bindingId);
+            if (key == Key.None)
+            {
+                return false;
+            }
+
+            var control = keyboard[key];
+            return control != null && control.wasPressedThisFrame;
         }
 
         public void AdjustOverall(float delta)

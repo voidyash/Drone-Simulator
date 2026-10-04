@@ -54,6 +54,7 @@ namespace DroneSimulator.Simulation
                 return;
             }
 
+            DroneSimulator.Configuration.InputRebindStore.Apply(actions);
             droneActionMap = actions.FindActionMap("Drone", false);
             if (droneActionMap == null)
             {

@@ -1,9 +1,12 @@
 using System.Collections.Generic;
+using DroneSimulator.Configuration;
 using DroneSimulator.Drones;
 using DroneSimulator.Environment;
 using DroneSimulator.Sensors;
 using DroneSimulator.Simulation;
 using UnityEngine;
+using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.Controls;
 using UnityEngine.UI;
 
 namespace DroneSimulator.UI
@@ -47,6 +50,14 @@ namespace DroneSimulator.UI
         private GameObject runtimeLeft;
         private GameObject runtimeRight;
         private GameObject runtimeBar;
+        private GameObject crosshairGo;
+        private GameObject controlsTab;
+        private GameObject controlsPanel;
+        private GameObject remapPanel;
+        private GameObject hudTab;
+        private bool controlsOpen;
+        private bool remapOpen;
+        private bool hudHidden;
         private readonly Dictionary<string, Text> values = new Dictionary<string, Text>();
         private readonly Dictionary<string, Slider> sliders = new Dictionary<string, Slider>();
 
@@ -66,6 +77,16 @@ namespace DroneSimulator.UI
 
         private void Update()
         {
+            var keyboard = Keyboard.current;
+            // Guard the first half-second: the InputSystem can deliver a
+            // stale pressed frame on play-mode entry, which would flip a
+            // panel open before the user touches anything.
+            if (keyboard != null && Time.timeSinceLevelLoad > 0.5f)
+            {
+                if (Pressed(keyboard, "panel")) ToggleControls();
+                if (Pressed(keyboard, "hud")) ToggleHud();
+            }
+
             refreshTimer += Time.deltaTime;
             if (refreshTimer < 0.25f)
             {
@@ -94,11 +115,198 @@ namespace DroneSimulator.UI
 
         private void ApplyVisibility()
         {
-            bool cfg = state == UiState.Config;
-            if (configPanel != null) configPanel.SetActive(cfg);
-            if (runtimeLeft != null) runtimeLeft.SetActive(!cfg);
-            if (runtimeRight != null) runtimeRight.SetActive(!cfg);
-            if (runtimeBar != null) runtimeBar.SetActive(!cfg);
+            ApplyHudVisibility();
+        }
+
+        private static bool Pressed(Keyboard keyboard, string bindingId)
+        {
+            Key key = KeyBindings.Get(bindingId);
+            if (key == Key.None)
+            {
+                return false;
+            }
+
+            var control = keyboard[key];
+            return control != null && control.wasPressedThisFrame;
+        }
+
+        // ---------- help panels (reference + remap, both states) ----------
+
+        private struct ActionRef
+        {
+            public string LabelKey;
+            public string Action;
+            public string PathA;
+            public string PathB;
+        }
+
+        private struct KeyRef
+        {
+            public string LabelKey;
+            public string IdA;
+            public string IdB;
+        }
+
+        private readonly List<ActionRef> actionRefs = new List<ActionRef>();
+        private readonly List<KeyRef> keyRefs = new List<KeyRef>();
+        private InputActionRebindingExtensions.RebindingOperation pendingOp;
+        private InputAction captureAction;
+
+        private InputActionMap DroneMap()
+        {
+            return InputSystem.actions != null ? InputSystem.actions.FindActionMap("Drone", false) : null;
+        }
+
+        private void StartActionRebind(string actionName, string defaultPath, string labelKey)
+        {
+            var map = DroneMap();
+            var action = map != null ? map.FindAction(actionName, false) : null;
+            int index = InputRebindStore.FindBinding(action, defaultPath);
+            if (action == null || index < 0)
+            {
+                return;
+            }
+
+            CancelRebinds();
+            SetText(labelKey, "press key…");
+            pendingOp = action.PerformInteractiveRebinding(index)
+                .WithControlsHavingToMatchPath("<Keyboard>")
+                .WithCancelingThrough("<Keyboard>/escape")
+                .OnComplete(op =>
+                {
+                    InputRebindStore.Save(InputSystem.actions);
+                    RefreshControlLabels();
+                    CancelRebinds();
+                })
+                .OnCancel(op =>
+                {
+                    RefreshControlLabels();
+                    CancelRebinds();
+                })
+                .Start();
+        }
+
+        private void StartKeyRebind(string bindingId, string labelKey)
+        {
+            CancelRebinds();
+            SetText(labelKey, "press key…");
+            // NOTE: do NOT enable the capture action first — interactive
+            // rebinding throws if its action is already enabled.
+            captureAction = new InputAction("capture", InputActionType.Button, "<Keyboard>");
+            InputAction target = captureAction;
+            string id = bindingId;
+            pendingOp = target.PerformInteractiveRebinding()
+                .WithCancelingThrough("<Keyboard>/escape")
+                .OnComplete(op =>
+                {
+                    if (op.selectedControl is KeyControl keyControl)
+                    {
+                        KeyBindings.Set(id, keyControl.keyCode);
+                    }
+
+                    RefreshControlLabels();
+                    CancelRebinds();
+                })
+                .OnCancel(op =>
+                {
+                    RefreshControlLabels();
+                    CancelRebinds();
+                })
+                .Start();
+        }
+
+        private void CancelRebinds()
+        {
+            if (pendingOp != null)
+            {
+                pendingOp.Dispose();
+                pendingOp = null;
+            }
+
+            if (captureAction != null)
+            {
+                captureAction.Disable();
+                captureAction.Dispose();
+                captureAction = null;
+            }
+        }
+
+        private void ResetAllBindings()
+        {
+            CancelRebinds();
+            if (InputSystem.actions != null)
+            {
+                InputRebindStore.Reset(InputSystem.actions);
+            }
+
+            KeyBindings.ResetAll();
+            RefreshControlLabels();
+        }
+
+        private static GameObject AnchorTopRight(Transform canvas, string name, float width, float height, float top)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(canvas, false);
+            var rect = go.AddComponent<RectTransform>();
+            rect.anchorMin = new Vector2(1f, 1f);
+            rect.anchorMax = new Vector2(1f, 1f);
+            rect.pivot = new Vector2(1f, 1f);
+            rect.anchoredPosition = new Vector2(-10f, -top);
+            rect.sizeDelta = new Vector2(width, height);
+            return go;
+        }
+
+        private static GameObject AnchorTopLeft(Transform canvas, string name, float width, float height, float top)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(canvas, false);
+            var rect = go.AddComponent<RectTransform>();
+            rect.anchorMin = new Vector2(0f, 1f);
+            rect.anchorMax = new Vector2(0f, 1f);
+            rect.pivot = new Vector2(0f, 1f);
+            rect.anchoredPosition = new Vector2(10f, -top);
+            rect.sizeDelta = new Vector2(width, height);
+            return go;
+        }
+
+        public void ToggleControls()
+        {
+            controlsOpen = !controlsOpen;
+            if (controlsOpen) remapOpen = false;
+            ApplyHelpVisibility();
+        }
+
+        public void ToggleRemap()
+        {
+            remapOpen = !remapOpen;
+            if (remapOpen) controlsOpen = false;
+            else CancelRebinds();
+            ApplyHelpVisibility();
+        }
+
+        public void ToggleHud()
+        {
+            hudHidden = !hudHidden;
+            ApplyHudVisibility();
+        }
+
+        private void ApplyHelpVisibility()
+        {
+            if (controlsTab != null) controlsTab.SetActive(!controlsOpen && !remapOpen && !hudHidden);
+            if (controlsPanel != null) controlsPanel.SetActive(controlsOpen && !hudHidden);
+            if (remapPanel != null) remapPanel.SetActive(remapOpen && !hudHidden);
+        }
+
+        private void ApplyHudVisibility()
+        {
+            bool show = !hudHidden;
+            if (configPanel != null) configPanel.SetActive(show && state == UiState.Config);
+            if (runtimeLeft != null) runtimeLeft.SetActive(show && state == UiState.Runtime);
+            if (runtimeRight != null) runtimeRight.SetActive(show && state == UiState.Runtime);
+            if (runtimeBar != null) runtimeBar.SetActive(show && state == UiState.Runtime);
+            if (crosshairGo != null) crosshairGo.SetActive(show);
+            if (hudTab != null) hudTab.SetActive(!show);
+            ApplyHelpVisibility();
         }
 
         // ---------- config actions (all live) ----------
@@ -466,7 +674,7 @@ namespace DroneSimulator.UI
             canvas.sortingOrder = 100;
             var scaler = canvasGo.AddComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1280f, 720f);
+            scaler.referenceResolution = new Vector2(1920f, 1080f);
             canvasGo.AddComponent<GraphicRaycaster>();
 
             configPanel = BuildConfigPanel(canvasGo.transform);
@@ -474,6 +682,8 @@ namespace DroneSimulator.UI
             runtimeRight = BuildRuntimeRight(canvasGo.transform);
             runtimeBar = BuildRuntimeBar(canvasGo.transform);
             BuildCrosshair(canvasGo.transform);
+            crosshairGo = canvasGo.transform.Find("Crosshair")?.gameObject;
+            BuildHelpWidgets(canvasGo.transform);
         }
 
         private GameObject BuildConfigPanel(Transform canvas)
@@ -550,7 +760,7 @@ namespace DroneSimulator.UI
             var image = bar.AddComponent<Image>();
             image.color = Bg;
 
-            float totalW = 1260f;
+            float totalW = 1900f;
             float x = 12f;
             AddBarBlock(bar, "SIM", "bSimVal", x, totalW, 0.10f);
             x += totalW * 0.10f;
@@ -702,6 +912,407 @@ namespace DroneSimulator.UI
             slider.handleRect = null;
             sliders[sliderKey] = slider;
             return x + totalW * fraction;
+        }
+
+        private void AddHeaderButton(GameObject parent, string text, UnityEngine.Events.UnityAction onClick)
+        {
+            var go = new GameObject("HeaderButton");
+            go.transform.SetParent(parent.transform, false);
+            var rect = RectOf(go);
+            rect.anchorMin = new Vector2(0f, 0f);
+            rect.anchorMax = new Vector2(1f, 1f);
+            rect.offsetMin = new Vector2(Pad, 4f);
+            rect.offsetMax = new Vector2(-Pad, -4f);
+            var button = go.AddComponent<Button>();
+            button.onClick.AddListener(onClick);
+            var textGo = new GameObject("Text");
+            textGo.transform.SetParent(go.transform, false);
+            var textRect = textGo.AddComponent<RectTransform>();
+            textRect.anchorMin = Vector2.zero;
+            textRect.anchorMax = Vector2.one;
+            textRect.offsetMin = Vector2.zero;
+            textRect.offsetMax = Vector2.zero;
+            var label = textGo.AddComponent<Text>();
+            label.font = font;
+            label.fontSize = 13;
+            label.fontStyle = FontStyle.Bold;
+            label.color = HeaderCyan;
+            label.alignment = TextAnchor.MiddleLeft;
+            label.supportRichText = true;
+            label.raycastTarget = false;
+            label.text = text;
+        }
+
+        private float AddSheetHeader(GameObject panel, float y, string text, UnityEngine.Events.UnityAction onClick)
+        {
+            var go = new GameObject("SheetHeader");
+            go.transform.SetParent(panel.transform, false);
+            var rect = RectOf(go);
+            rect.anchorMin = new Vector2(0f, 1f);
+            rect.anchorMax = new Vector2(1f, 1f);
+            rect.pivot = new Vector2(0.5f, 1f);
+            rect.anchoredPosition = new Vector2(0f, -y);
+            rect.sizeDelta = new Vector2(-(Pad * 2f), 26f);
+            var button = go.AddComponent<Button>();
+            button.onClick.AddListener(onClick);
+            var textGo = new GameObject("Text");
+            textGo.transform.SetParent(go.transform, false);
+            var textRect = textGo.AddComponent<RectTransform>();
+            textRect.anchorMin = Vector2.zero;
+            textRect.anchorMax = Vector2.one;
+            textRect.offsetMin = Vector2.zero;
+            textRect.offsetMax = Vector2.zero;
+            var label = textGo.AddComponent<Text>();
+            label.font = font;
+            label.fontSize = 13;
+            label.fontStyle = FontStyle.Bold;
+            label.color = HeaderCyan;
+            label.alignment = TextAnchor.MiddleLeft;
+            label.supportRichText = true;
+            label.raycastTarget = false;
+            label.text = text;
+            return y + 26f + Gap;
+        }
+
+        private void AddSheetButton(GameObject panel, float y, string text, UnityEngine.Events.UnityAction onClick, Color? bg)
+        {
+            AddButton(panel, y, 30f, text, onClick, bg);
+        }
+
+        private float AddRefSection(GameObject panel, float y, string title)
+        {
+            AddText(panel, y, 13f, title, 10, DimText);
+            return y + 13f + 4f;
+        }
+
+        private float AddRefActionRow(GameObject panel, float y, string labelKey, string action, string actionName, string pathA, string pathB)
+        {
+            actionRefs.Add(new ActionRef { LabelKey = labelKey, Action = actionName, PathA = pathA, PathB = pathB });
+            var label = AddText(panel, y, 16f, action, 11, BodyText);
+            ShiftLabelRight(label, panel, y, 16f);
+            values[labelKey] = label;
+            var chip = AddKeyChip(panel, y, "--");
+            values[labelKey + "_k"] = chip;
+            return y + 16f + 2f;
+        }
+
+        private float AddRefKeyRow(GameObject panel, float y, string labelKey, string action, string id)
+        {
+            return AddRefKeyRow(panel, y, labelKey, action, id, null);
+        }
+
+        private float AddRefKeyRow(GameObject panel, float y, string labelKey, string action, string idA, string idB)
+        {
+            keyRefs.Add(new KeyRef { LabelKey = labelKey, IdA = idA, IdB = idB });
+            var label = AddText(panel, y, 16f, action, 11, BodyText);
+            ShiftLabelRight(label, panel, y, 16f);
+            values[labelKey] = label;
+            var chip = AddKeyChip(panel, y, "--");
+            values[labelKey + "_k"] = chip;
+            return y + 16f + 2f;
+        }
+
+        private float AddRefStaticRow(GameObject panel, float y, string key, string action)
+        {
+            var label = AddText(panel, y, 16f, action, 11, BodyText);
+            ShiftLabelRight(label, panel, y, 16f);
+            AddKeyChip(panel, y, key);
+            return y + 16f + 2f;
+        }
+
+        private Text AddKeyChip(GameObject panel, float y, string text)
+        {
+            var keyGo = new GameObject("Key");
+            keyGo.transform.SetParent(panel.transform, false);
+            var keyRect = RectOf(keyGo);
+            keyRect.anchorMin = new Vector2(0f, 1f);
+            keyRect.anchorMax = new Vector2(0f, 1f);
+            keyRect.pivot = new Vector2(0f, 1f);
+            keyRect.anchoredPosition = new Vector2(Pad, -y);
+            keyRect.sizeDelta = new Vector2(64f, 16f);
+            var keyBg = keyGo.AddComponent<Image>();
+            keyBg.color = ButtonBg;
+            var keyTextGo = new GameObject("Text");
+            keyTextGo.transform.SetParent(keyGo.transform, false);
+            var keyTextRect = keyTextGo.AddComponent<RectTransform>();
+            keyTextRect.anchorMin = Vector2.zero;
+            keyTextRect.anchorMax = Vector2.one;
+            keyTextRect.offsetMin = Vector2.zero;
+            keyTextRect.offsetMax = Vector2.zero;
+            var keyText = keyTextGo.AddComponent<Text>();
+            keyText.font = font;
+            keyText.fontSize = 10;
+            keyText.fontStyle = FontStyle.Bold;
+            keyText.color = Amber;
+            keyText.alignment = TextAnchor.MiddleCenter;
+            keyText.text = text;
+            keyText.raycastTarget = false;
+            return keyText;
+        }
+
+        private void ShiftLabelRight(Text label, GameObject panel, float y, float height)
+        {
+            var rect = label.GetComponent<RectTransform>();
+            rect.anchorMin = new Vector2(0f, 1f);
+            rect.anchorMax = new Vector2(1f, 1f);
+            rect.pivot = new Vector2(0f, 1f);
+            rect.anchoredPosition = new Vector2(Pad + 64f + 8f, -y);
+            rect.sizeDelta = new Vector2(-(Pad + 64f + 8f + Pad), height);
+        }
+
+        private void AddRemapColumnTitle(GameObject panel, float x, float y, string title)
+        {
+            var go = new GameObject("ColTitle");
+            go.transform.SetParent(panel.transform, false);
+            var rect = RectOf(go);
+            rect.anchorMin = new Vector2(0f, 1f);
+            rect.anchorMax = new Vector2(0f, 1f);
+            rect.pivot = new Vector2(0f, 1f);
+            rect.anchoredPosition = new Vector2(x, -y);
+            rect.sizeDelta = new Vector2(280f, 15f);
+            var label = go.AddComponent<Text>();
+            label.font = font;
+            label.fontSize = 11;
+            label.color = DimText;
+            label.alignment = TextAnchor.MiddleLeft;
+            label.text = title;
+            label.raycastTarget = false;
+        }
+
+        private float AddRemapActionRow(GameObject panel, float x, float y, string actionLabel, string actionName, string path, string keyLabelKey)
+        {
+            remapActionRows.Add(new RemapActionRef { LabelKey = keyLabelKey, Action = actionName, PathA = path });
+            AddRemapRowLabel(panel, x, y, actionLabel);
+            var button = AddRemapKeyButton(panel, x, y, "--");
+            values[keyLabelKey] = button;
+            string a = actionName, p = path, k = keyLabelKey;
+            button.GetComponentInParent<Button>().onClick.AddListener(() => StartActionRebind(a, p, k));
+            return y + 16f + 2f;
+        }
+
+        private float AddRemapKeyRow(GameObject panel, float x, float y, string actionLabel, string bindingId, string keyLabelKey)
+        {
+            remapKeyRows.Add(new RemapKeyRef { LabelKey = keyLabelKey, IdA = bindingId });
+            AddRemapRowLabel(panel, x, y, actionLabel);
+            var button = AddRemapKeyButton(panel, x, y, "--");
+            values[keyLabelKey] = button;
+            string b = bindingId, k = keyLabelKey;
+            button.GetComponentInParent<Button>().onClick.AddListener(() => StartKeyRebind(b, k));
+            return y + 16f + 2f;
+        }
+
+        private void AddRemapRowLabel(GameObject panel, float x, float y, string actionLabel)
+        {
+            var go = new GameObject("Action");
+            go.transform.SetParent(panel.transform, false);
+            var rect = RectOf(go);
+            rect.anchorMin = new Vector2(0f, 1f);
+            rect.anchorMax = new Vector2(0f, 1f);
+            rect.pivot = new Vector2(0f, 1f);
+            rect.anchoredPosition = new Vector2(x, -y);
+            rect.sizeDelta = new Vector2(150f, 16f);
+            var label = go.AddComponent<Text>();
+            label.font = font;
+            label.fontSize = 11;
+            label.color = BodyText;
+            label.alignment = TextAnchor.MiddleLeft;
+            label.text = actionLabel;
+            label.raycastTarget = false;
+        }
+
+        private Text AddRemapKeyButton(GameObject panel, float x, float y, string text)
+        {
+            var go = new GameObject("KeyButton");
+            go.transform.SetParent(panel.transform, false);
+            var rect = RectOf(go);
+            rect.anchorMin = new Vector2(0f, 1f);
+            rect.anchorMax = new Vector2(0f, 1f);
+            rect.pivot = new Vector2(0f, 1f);
+            rect.anchoredPosition = new Vector2(x + 158f, -y);
+            rect.sizeDelta = new Vector2(80f, 16f);
+            var image = go.AddComponent<Image>();
+            image.color = ButtonBg;
+            var button = go.AddComponent<Button>();
+            var textGo = new GameObject("Text");
+            textGo.transform.SetParent(go.transform, false);
+            var textRect = textGo.AddComponent<RectTransform>();
+            textRect.anchorMin = Vector2.zero;
+            textRect.anchorMax = Vector2.one;
+            textRect.offsetMin = Vector2.zero;
+            textRect.offsetMax = Vector2.zero;
+            var label = textGo.AddComponent<Text>();
+            label.font = font;
+            label.fontSize = 10;
+            label.fontStyle = FontStyle.Bold;
+            label.color = Amber;
+            label.alignment = TextAnchor.MiddleCenter;
+            label.text = text;
+            label.raycastTarget = false;
+            return label;
+        }
+
+        private void RefreshControlLabels()
+        {
+            var map = InputSystem.actions != null ? InputSystem.actions.FindActionMap("Drone", false) : null;
+            foreach (var row in actionRefs)
+            {
+                string text = "?";
+                if (map != null)
+                {
+                    var action = map.FindAction(row.Action, false);
+                    if (action != null)
+                    {
+                        text = InputRebindStore.DisplayKey(action, row.PathA);
+                        if (!string.IsNullOrEmpty(row.PathB))
+                        {
+                            text += " / " + InputRebindStore.DisplayKey(action, row.PathB);
+                        }
+                    }
+                }
+
+                SetText(row.LabelKey + "_k", text);
+            }
+
+            foreach (var row in keyRefs)
+            {
+                string text = KeyBindings.Get(row.IdA).ToString().ToUpperInvariant();
+                if (!string.IsNullOrEmpty(row.IdB))
+                {
+                    text += " / " + KeyBindings.Get(row.IdB).ToString().ToUpperInvariant();
+                }
+
+                SetText(row.LabelKey + "_k", text);
+            }
+
+            // Remap buttons mirror the same live values.
+            foreach (var row in remapActionRows)
+            {
+                string text = "?";
+                if (map != null)
+                {
+                    var action = map.FindAction(row.Action, false);
+                    if (action != null)
+                    {
+                        text = InputRebindStore.DisplayKey(action, row.PathA);
+                    }
+                }
+
+                SetText(row.LabelKey, text);
+            }
+
+            foreach (var row in remapKeyRows)
+            {
+                SetText(row.LabelKey, KeyBindings.Get(row.IdA).ToString().ToUpperInvariant());
+            }
+        }
+
+        private struct RemapActionRef
+        {
+            public string LabelKey;
+            public string Action;
+            public string PathA;
+        }
+
+        private struct RemapKeyRef
+        {
+            public string LabelKey;
+            public string IdA;
+        }
+
+        private readonly List<RemapActionRef> remapActionRows = new List<RemapActionRef>();
+        private readonly List<RemapKeyRef> remapKeyRows = new List<RemapKeyRef>();
+
+        private void BuildHelpWidgets(Transform canvas)
+        {
+            controlsTab = AnchorTopRight(canvas, "ControlsTab", 260f, 32f, 185f);
+            controlsTab.AddComponent<Image>().color = Bg;
+            AddHeaderButton(controlsTab, "▸ CONTROLS  [F1]", ToggleControls);
+
+            controlsPanel = AnchorTopRight(canvas, "ControlsPanel", 260f, 620f, 10f);
+            controlsPanel.AddComponent<Image>().color = Bg;
+            float y = 10f;
+            y = AddSheetHeader(controlsPanel, y, "▾ CONTROLS  [F1]", ToggleControls);
+            y = AddRefSection(controlsPanel, y, "FLIGHT");
+            y = AddRefActionRow(controlsPanel, y, "ck_fw", "Forward", "Move", "<Keyboard>/w", null);
+            y = AddRefActionRow(controlsPanel, y, "ck_bw", "Backward", "Move", "<Keyboard>/s", null);
+            y = AddRefActionRow(controlsPanel, y, "ck_lf", "Strafe Left", "Move", "<Keyboard>/a", null);
+            y = AddRefActionRow(controlsPanel, y, "ck_rt", "Strafe Right", "Move", "<Keyboard>/d", null);
+            y = AddRefSection(controlsPanel, y, "VERTICAL");
+            y = AddRefActionRow(controlsPanel, y, "ck_up", "Ascend", "Altitude", "<Keyboard>/e", null);
+            y = AddRefActionRow(controlsPanel, y, "ck_dn", "Descend", "Altitude", "<Keyboard>/q", null);
+            y = AddRefSection(controlsPanel, y, "ROTATION");
+            y = AddRefStaticRow(controlsPanel, y, "MOUSE", "Look / Yaw");
+            y = AddRefActionRow(controlsPanel, y, "ck_z", "Yaw Left", "Turn", "<Keyboard>/z", null);
+            y = AddRefActionRow(controlsPanel, y, "ck_c", "Yaw Right", "Turn", "<Keyboard>/c", null);
+            y = AddRefSection(controlsPanel, y, "ACROBATICS");
+            y = AddRefKeyRow(controlsPanel, y, "ck_x", "Flip Forward 180°", "flipFwd");
+            y = AddRefKeyRow(controlsPanel, y, "ck_n", "Flip Roll 180°", "flipRoll");
+            y = AddRefSection(controlsPanel, y, "SIMULATION");
+            y = AddRefActionRow(controlsPanel, y, "ck_spd", "Sim Speed − / +", "SimulationSpeedDown", "<Keyboard>/leftBracket", "<Keyboard>/rightBracket");
+            y = AddRefSection(controlsPanel, y, "ENVIRONMENT");
+            y = AddRefKeyRow(controlsPanel, y, "ck_wnd", "Wind − / +", "windUp", "windDown");
+            y = AddRefKeyRow(controlsPanel, y, "ck_wd", "Wind Dir − / +", "windDirUp", "windDirDown");
+            y = AddRefKeyRow(controlsPanel, y, "ck_tb", "Turbulence − / +", "turbUp", "turbDown");
+            y = AddRefKeyRow(controlsPanel, y, "ck_vs", "Visibility − / +", "visUp", "visDown");
+            y = AddRefKeyRow(controlsPanel, y, "ck_wx", "Cycle Weather", "weather");
+            y = AddRefKeyRow(controlsPanel, y, "ck_tm", "Cycle Time", "time");
+            y = AddRefSection(controlsPanel, y, "SENSORS");
+            y = AddRefKeyRow(controlsPanel, y, "ck_sn", "Degradation − / +", "sensUp", "sensDown");
+            y = AddRefKeyRow(controlsPanel, y, "ck_so", "Reset Degradation", "sensReset");
+            y = AddRefSection(controlsPanel, y, "INTERFACE");
+            y = AddRefKeyRow(controlsPanel, y, "ck_f1", "Controls Panel", "panel");
+            y = AddRefKeyRow(controlsPanel, y, "ck_f2", "Hide / Show HUD", "hud");
+            AddSheetButton(controlsPanel, y, "REMAP KEYS  ▸", ToggleRemap, AccentBg);
+
+            remapPanel = AnchorTopRight(canvas, "RemapPanel", 560f, 410f, 10f);
+            remapPanel.AddComponent<Image>().color = Bg;
+            float ry = 10f;
+            ry = AddSheetHeader(remapPanel, ry, "▾ REMAP KEYS  (ESC cancels capture)", ToggleRemap);
+            AddRemapColumnTitle(remapPanel, Pad, ry, "INPUT ACTIONS");
+            AddRemapColumnTitle(remapPanel, 290f, ry, "SHORTCUT KEYS");
+            ry += 20f;
+            float ly = ry, ryy = ry;
+            ly = AddRemapActionRow(remapPanel, Pad, ly, "Forward", "Move", "<Keyboard>/w", "rb_w");
+            ly = AddRemapActionRow(remapPanel, Pad, ly, "Backward", "Move", "<Keyboard>/s", "rb_s");
+            ly = AddRemapActionRow(remapPanel, Pad, ly, "Strafe Left", "Move", "<Keyboard>/a", "rb_a");
+            ly = AddRemapActionRow(remapPanel, Pad, ly, "Strafe Right", "Move", "<Keyboard>/d", "rb_d");
+            ly = AddRemapActionRow(remapPanel, Pad, ly, "Ascend", "Altitude", "<Keyboard>/e", "rb_e");
+            ly = AddRemapActionRow(remapPanel, Pad, ly, "Descend", "Altitude", "<Keyboard>/q", "rb_q");
+            ly = AddRemapActionRow(remapPanel, Pad, ly, "Yaw Left", "Turn", "<Keyboard>/z", "rb_z");
+            ly = AddRemapActionRow(remapPanel, Pad, ly, "Yaw Right", "Turn", "<Keyboard>/c", "rb_c");
+            ly = AddRemapActionRow(remapPanel, Pad, ly, "Sim Slower", "SimulationSpeedDown", "<Keyboard>/leftBracket", "rb_lb");
+            ly = AddRemapActionRow(remapPanel, Pad, ly, "Sim Faster", "SimulationSpeedUp", "<Keyboard>/rightBracket", "rb_rb2");
+            ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Wind +", "windUp", "rk_wu");
+            ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Wind −", "windDown", "rk_wd");
+            ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Wind Dir +", "windDirUp", "rk_du");
+            ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Wind Dir −", "windDirDown", "rk_dd");
+            ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Turbulence +", "turbUp", "rk_tu");
+            ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Turbulence −", "turbDown", "rk_td");
+            ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Visibility +", "visUp", "rk_vu");
+            ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Visibility −", "visDown", "rk_vd");
+            ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Cycle Weather", "weather", "rk_wx");
+            ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Cycle Time", "time", "rk_tm");
+            ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Degradation +", "sensUp", "rk_su");
+            ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Degradation −", "sensDown", "rk_sd");
+            ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Reset Degradation", "sensReset", "rk_sr");
+            ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Flip Forward", "flipFwd", "rk_x");
+            ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Flip Roll", "flipRoll", "rk_n");
+            ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Controls Panel", "panel", "rk_f1");
+            ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Hide / Show HUD", "hud", "rk_f2");
+            AddSheetButton(remapPanel, Mathf.Max(ly, ryy) + Gap, "RESET ALL DEFAULTS", ResetAllBindings, null);
+
+            hudTab = AnchorTopLeft(canvas, "HudTab", 170f, 32f, 10f);
+            hudTab.AddComponent<Image>().color = Bg;
+            AddHeaderButton(hudTab, "SHOW UI  [F2]", ToggleHud);
+
+            controlsTab.SetActive(true);
+            controlsPanel.SetActive(false);
+            remapPanel.SetActive(false);
+            hudTab.SetActive(false);
+            controlsOpen = false;
+            remapOpen = false;
+            hudHidden = false;
+            RefreshControlLabels();
         }
 
         private void BuildCrosshair(Transform canvas)
