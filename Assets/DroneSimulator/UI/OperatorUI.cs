@@ -1245,8 +1245,8 @@ namespace DroneSimulator.UI
             y = AddRefActionRow(controlsPanel, y, "ck_z", "Yaw Left", "Turn", "<Keyboard>/z", null);
             y = AddRefActionRow(controlsPanel, y, "ck_c", "Yaw Right", "Turn", "<Keyboard>/c", null);
             y = AddRefSection(controlsPanel, y, "ACROBATICS");
-            y = AddRefKeyRow(controlsPanel, y, "ck_x", "Flip Forward 180°", "flipFwd");
-            y = AddRefKeyRow(controlsPanel, y, "ck_n", "Flip Roll 180°", "flipRoll");
+            y = AddRefKeyRow(controlsPanel, y, "ck_x", "Pitch Fwd (Hold)", "flipFwd");
+            y = AddRefKeyRow(controlsPanel, y, "ck_n", "Roll (Hold)", "flipRoll");
             y = AddRefSection(controlsPanel, y, "SIMULATION");
             y = AddRefActionRow(controlsPanel, y, "ck_spd", "Sim Speed − / +", "SimulationSpeedDown", "<Keyboard>/leftBracket", "<Keyboard>/rightBracket");
             y = AddRefSection(controlsPanel, y, "ENVIRONMENT");
@@ -1295,8 +1295,8 @@ namespace DroneSimulator.UI
             ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Degradation +", "sensUp", "rk_su");
             ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Degradation −", "sensDown", "rk_sd");
             ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Reset Degradation", "sensReset", "rk_sr");
-            ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Flip Forward", "flipFwd", "rk_x");
-            ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Flip Roll", "flipRoll", "rk_n");
+            ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Pitch Fwd (Hold)", "flipFwd", "rk_x");
+            ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Roll (Hold)", "flipRoll", "rk_n");
             ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Controls Panel", "panel", "rk_f1");
             ryy = AddRemapKeyRow(remapPanel, 290f, ryy, "Hide / Show HUD", "hud", "rk_f2");
             AddSheetButton(remapPanel, Mathf.Max(ly, ryy) + Gap, "RESET ALL DEFAULTS", ResetAllBindings, null);

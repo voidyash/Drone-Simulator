@@ -285,10 +285,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c12f2f0a37c0d224cac4889d016f0273, type: 3}
   m_Name: 
   m_EditorClassIdentifier: DroneSimulator.Runtime::DroneSimulator.UI.StartMenuController
-  mode: 0
   simulatorScene: Simulator
-  placeholderScene: SIHDemoPlay
-  menuScene: StartMenu
 --- !u!4 &334625457
 Transform:
   m_ObjectHideFlags: 0
@@ -334,7 +331,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: DroneSimulator.Runtime::DroneSimulator.Audio.AudioManager
   bgmClip: {fileID: 8300000, guid: 28424b6dbc6ec164290d7c9f33ac5cfc, type: 3}
-  bgmVolume: 0.15
+  bgmVolume: 0.012
   playOnAwake: 1
 --- !u!4 &356095760
 Transform:

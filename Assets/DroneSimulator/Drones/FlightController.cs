@@ -39,12 +39,8 @@ namespace DroneSimulator.Drones
         private bool flightEnabled = true;
 
         [Header("Acrobatics")]
-        [Tooltip("Degrees per second during a flip maneuver.")]
-        [Min(90f)] [SerializeField] private float flipRateDegreesPerSecond = 360f;
-        [Tooltip("World-Y correction gain (1/s) while a flip holds altitude.")]
-        [Min(0f)] [SerializeField] private float altitudeHoldGain = 3f;
-        [Tooltip("Max vertical correction speed (m/s) during altitude hold.")]
-        [Min(0f)] [SerializeField] private float maxAltitudeCorrection = 6f;
+        [Tooltip("Degrees per second while a rotate key (X pitch / N roll) is held. Rotation stops on release — never auto-completes.")]
+        [Min(30f)] [SerializeField] private float manualRotateDegreesPerSecond = 120f;
 
         [Header("Impact Stability")]
         [Tooltip("Angular damping: bleeds off collision-induced spin so the drone recovers instead of rotating forever. Intentional rotation (yaw/flips/bank) is transform-driven and unaffected.")]
@@ -58,10 +54,8 @@ namespace DroneSimulator.Drones
         [Tooltip("Orientation recovery rate (1/s) toward the startup orientation. Fades out over the window.")]
         [Min(0f)] [SerializeField] private float recoveryRate = 5f;
 
-        private bool flipping;
-        private Vector3 flipAxis = Vector3.right;
-        private float flipRemaining;
-        private float holdAltitudeY;
+        private float manualPitch;
+        private float manualRoll;
         private Quaternion startupOrientation = Quaternion.identity;
         private float lastImpactTime = float.NegativeInfinity;
         private float lastContactTime = float.NegativeInfinity;
@@ -104,7 +98,7 @@ namespace DroneSimulator.Drones
                 return;
             }
 
-            PollFlipInput();
+            PollRotateInput();
 
             // Pilot yaw (no autopilot active).
             if (autopilotVelocity.HasValue)
@@ -136,7 +130,7 @@ namespace DroneSimulator.Drones
                 return;
             }
 
-            ProgressFlip();
+            ApplyManualRotation();
 
             var movement = moveAction.ReadValue<Vector2>();
             var altitude = altitudeAction.ReadValue<float>();
@@ -165,21 +159,6 @@ namespace DroneSimulator.Drones
                 targetVelocity += windDrift + gustDrift;
             }
 
-            if (flipping)
-            {
-                // World-space altitude hold: correct toward the Y captured at
-                // flip start, independent of body orientation (never uses
-                // transform.up/local axes). Pilot vertical input above stays
-                // authoritative; this only trims world-Y drift so flips and
-                // rolls don't cost altitude. Single authority: the chase
-                // below applies the summed target, no extra force system.
-                float correction = Mathf.Clamp(
-                    (holdAltitudeY - transform.position.y) * altitudeHoldGain,
-                    -maxAltitudeCorrection,
-                    maxAltitudeCorrection);
-                targetVelocity.y += correction;
-            }
-
             var changingSpeed = targetVelocity.sqrMagnitude > body.linearVelocity.sqrMagnitude;
             var rate = changingSpeed ? acceleration : deceleration;
             body.linearVelocity = Vector3.MoveTowards(
@@ -196,7 +175,7 @@ namespace DroneSimulator.Drones
                 body.angularVelocity = Vector3.ClampMagnitude(body.angularVelocity, maxAngularVelocity);
             }
 
-            if (!flipping && localDirection.sqrMagnitude < 0.09f
+            if (localDirection.sqrMagnitude < 0.09f
                 && Time.time - lastContactTime < 0.3f
                 && Quaternion.Angle(body.rotation, startupOrientation) > 5f)
             {
@@ -249,7 +228,7 @@ namespace DroneSimulator.Drones
         /// </summary>
         private void ApplyRecovery()
         {
-            if (flipping || body == null)
+            if (body == null)
             {
                 return;
             }
@@ -288,48 +267,39 @@ namespace DroneSimulator.Drones
             autopilotVelocity = velocity;
         }
 
-        /// <summary>
-        /// Starts a 180-degree flip maneuver with world-space altitude hold.
-        /// pitchFlip=true rotates about local X (forward flip); false rotates
-        /// about local Z (roll flip). Orientation is never auto-leveled: the
-        /// drone stays inverted afterwards until the pilot rotates it back.
-        /// X = pitch flip, N = roll flip (Keyboard.current polling, same
-        /// precedent as the environment/sensor runtime keys).
-        /// </summary>
-        public void TriggerFlip(bool pitchFlip)
-        {
-            if (flipping || !flightEnabled)
-            {
-                return;
-            }
-
-            flipping = true;
-            flipAxis = pitchFlip ? Vector3.right : Vector3.forward;
-            flipRemaining = 180f;
-            holdAltitudeY = transform.position.y;
-        }
-
-        public bool IsFlipping => flipping;
-
-        /// <summary>World-Y altitude captured at flip start (test/UI readback).</summary>
-        public float HoldAltitudeY => holdAltitudeY;
-
-        private void PollFlipInput()
+        private void PollRotateInput()
         {
             var keyboard = Keyboard.current;
-            if (keyboard == null || flipping)
+            if (keyboard == null)
+            {
+                manualPitch = 0f;
+                manualRoll = 0f;
+                return;
+            }
+
+            manualPitch = Held(keyboard, "flipFwd") ? 1f : 0f;
+            manualRoll = Held(keyboard, "flipRoll") ? 1f : 0f;
+        }
+
+        private void ApplyManualRotation()
+        {
+            if (body == null)
             {
                 return;
             }
 
-            if (Pressed(keyboard, "flipFwd"))
+            float step = manualRotateDegreesPerSecond * Time.fixedDeltaTime;
+            if (Mathf.Approximately(step, 0f) || (Mathf.Approximately(manualPitch, 0f) && Mathf.Approximately(manualRoll, 0f)))
             {
-                TriggerFlip(true);
+                return;
             }
-            else if (Pressed(keyboard, "flipRoll"))
-            {
-                TriggerFlip(false);
-            }
+
+            // Physics-space rotation (not Transform): interpolated/sleeping
+            // bodies drop raw Transform writes. MoveRotation is adopted by the
+            // solver and wakes the body.
+            body.MoveRotation(body.rotation
+                * Quaternion.AngleAxis(manualPitch * step, Vector3.right)
+                * Quaternion.AngleAxis(manualRoll * step, Vector3.forward));
         }
 
         private static bool Pressed(Keyboard keyboard, string bindingId)
@@ -344,24 +314,16 @@ namespace DroneSimulator.Drones
             return control != null && control.wasPressedThisFrame;
         }
 
-        private void ProgressFlip()
+        private static bool Held(Keyboard keyboard, string bindingId)
         {
-            if (!flipping || body == null)
+            Key key = Configuration.KeyBindings.Get(bindingId);
+            if (key == Key.None)
             {
-                return;
+                return false;
             }
 
-            // Physics-space rotation (not Transform): interpolated/sleeping
-            // bodies drop raw Transform writes, which would stall or erase
-            // the maneuver. MoveRotation is adopted by the solver and wakes
-            // the body, so the flip always completes exactly.
-            float step = Mathf.Min(flipRateDegreesPerSecond * Time.fixedDeltaTime, flipRemaining);
-            body.MoveRotation(body.rotation * Quaternion.AngleAxis(step, flipAxis));
-            flipRemaining -= step;
-            if (flipRemaining <= 0f)
-            {
-                flipping = false;
-            }
+            var control = keyboard[key];
+            return control != null && control.isPressed;
         }
 
         /// <summary>
